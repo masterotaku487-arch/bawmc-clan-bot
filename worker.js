@@ -83,7 +83,7 @@ async function askGroq(userMessage, groqKey) {
 }
 
 // Responde a uma interação de slash command
-async function handleInteraction(interaction, env) {
+async function handleInteraction(interaction, env, ctx) {
   const { type, data, member, user } = interaction;
 
   // Tipo 1 = PING (verificação do Discord)
@@ -143,7 +143,7 @@ async function handleInteraction(interaction, env) {
       );
 
       // Processa em background e edita a resposta
-      env.ctx?.waitUntil(
+      ctx.waitUntil(
         (async () => {
           try {
             const reply = await askGroq(userMessage, env.GROQ_KEY);
@@ -187,8 +187,6 @@ function jsonResponse(data) {
 // Handler principal do Cloudflare Worker
 export default {
   async fetch(request, env, ctx) {
-    env.ctx = ctx; // Passa o ctx para waitUntil
-
     const url = new URL(request.url);
 
     // Rota de registro de comandos (acesse uma vez para registrar)
@@ -217,7 +215,7 @@ export default {
       }
 
       const interaction = JSON.parse(body);
-      return handleInteraction(interaction, env);
+      return handleInteraction(interaction, env, ctx);
     }
 
     // Rota de menção (via bot gateway — não suportado em Workers)
@@ -232,3 +230,4 @@ export default {
     return new Response("Not found", { status: 404 });
   },
 };
+                  
