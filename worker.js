@@ -16,7 +16,7 @@ import os
 logging.basicConfig(level=logging.INFO)
 
 # TOKEN DO CÓDIGO ANTERIOR (FIXO - NÃO MUDA)
-DISCORD_TOKEN = "MTM5NzYxNzY4OTY5NjY5NzY4.Xg4Z_g.ABC123def456GHI789jkl012MNO345pqr678STU901vwx234YZ5"  # Token do seu código anterior
+DISCORD_TOKEN = ""  # Token do seu código anterior
 TASKITOS_URL = "https://taskitos.cupiditys.lol/"
 
 intents = discord.Intents.default()
