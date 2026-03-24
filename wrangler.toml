@@ -1,7 +1,0 @@
-name = "bawmc-clan-bot"
-main = "worker.js"
-compatibility_date = "2026-03-14"
-
-[[kv_namespaces]]
-binding = "DB"
-id = "305bc9710a3b4fdebc2730de6c6831f3"
