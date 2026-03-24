@@ -1,1 +1,0 @@
-# bawmc-clan-bot
