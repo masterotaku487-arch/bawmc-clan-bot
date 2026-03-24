@@ -1,0 +1,14 @@
+name = "kira-bot"
+main = "index.js"
+compatibility_date = "2024-01-01"
+
+[vars]
+# Variáveis públicas (sem segredo)
+# As secretas ficam no painel do Cloudflare (wrangler secret put)
+
+# Secrets necessários (configure via: wrangler secret put NOME):
+# - DISCORD_TOKEN
+# - DISCORD_APP_ID
+# - DISCORD_PUBLIC_KEY
+# - GROQ_KEY
+# - REGISTER_SECRET  (qualquer senha sua para proteger a rota /register)
