@@ -2,7 +2,7 @@
 // Variaveis: DISCORD_TOKEN, DISCORD_PUBLIC_KEY, DISCORD_APP_ID, GROQ_KEY, REGISTER_SECRET
 
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions'
-const GROQ_MODEL   = 'llama3-70b-8192'
+const GROQ_MODEL   = 'llama-3.3-70b-versatile'
 
 const SYSTEM_PROMPT = `Voce e Kira, uma IA assistente simpatica e divertida que mora em um servidor do Discord.
 Personalidade:
