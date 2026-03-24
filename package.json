@@ -1,0 +1,17 @@
+{
+  "name": "kira-bot",
+  "version": "1.0.0",
+  "description": "Kira - Bot IA para Discord via Cloudflare Workers",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev"
+  },
+  "dependencies": {
+    "discord-interactions": "^3.4.0"
+  },
+  "devDependencies": {
+    "wrangler": "^3.0.0"
+  }
+}
