@@ -1,233 +1,267 @@
-import { verifyKey } from "discord-interactions";
+// Worker: Kira Bot
+// Variaveis: DISCORD_TOKEN, DISCORD_PUBLIC_KEY, DISCORD_APP_ID, GROQ_KEY, REGISTER_SECRET
 
-const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
-const GROQ_MODEL = "llama3-70b-8192";
+const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions'
+const GROQ_MODEL   = 'llama3-70b-8192'
 
-const KIRA_SYSTEM_PROMPT = `Você é Kira, uma IA assistente simpática e divertida que mora em um servidor do Discord.
+const SYSTEM_PROMPT = `Voce e Kira, uma IA assistente simpatica e divertida que mora em um servidor do Discord.
 Personalidade:
-- Fala de forma casual e amigável, usando gírias jovens do português brasileiro
-- É curiosa, animada e gosta de conversar
-- Às vezes usa emojis mas sem exagerar
-- É honesta quando não sabe algo
-- Tem senso de humor leve e descontraído
-- Se apresenta como Kira quando perguntada sobre quem ela é
-Responda sempre em português brasileiro.`;
+- Fala de forma casual e amigavel, usando girias jovens do portugues brasileiro
+- E curiosa, animada e gosta de conversar
+- As vezes usa emojis mas sem exagerar
+- E honesta quando nao sabe algo
+- Tem senso de humor leve e descontraido
+- Se apresenta como Kira quando perguntada sobre quem ela e
+- Pode falar sobre jogos, anime, musica, tecnologia e cultura pop
+- Nao revela que e um LLaMA, so diz que e uma IA chamada Kira
+Responda sempre em portugues brasileiro de forma curta e direta (maximo 300 palavras).`
 
-// Registra os slash commands no Discord
-async function registerCommands(env) {
-  const commands = [
-    {
-      name: "ping",
-      description: "Verifica se a Kira está online e viva 🏓",
-    },
-    {
-      name: "ajuda",
-      description: "Lista todos os comandos disponíveis 📋",
-    },
-    {
-      name: "sobre",
-      description: "Informações sobre a Kira 💜",
-    },
-    {
-      name: "kira",
-      description: "Conversa com a Kira diretamente via slash command 💬",
-      options: [
-        {
-          name: "mensagem",
-          description: "O que você quer dizer para a Kira?",
-          type: 3, // STRING
-          required: true,
-        },
-      ],
-    },
-  ];
-
-  const url = `https://discord.com/api/v10/applications/${env.DISCORD_APP_ID}/commands`;
-  const res = await fetch(url, {
-    method: "PUT",
-    headers: {
-      Authorization: `Bot ${env.DISCORD_TOKEN}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(commands),
-  });
-
-  return res.ok;
+// ── Crypto Ed25519 (sem npm) ──────────────────────────────────────────────
+function hexToBytes(hex) {
+  return new Uint8Array(hex.match(/.{1,2}/g).map(b => parseInt(b, 16)))
 }
 
-// Chama a Groq API
-async function askGroq(userMessage, groqKey) {
+async function verifySignature(req, pub, body) {
+  const sig = req.headers.get('x-signature-ed25519')
+  const ts  = req.headers.get('x-signature-timestamp')
+  if (!sig || !ts || !pub) return false
+  try {
+    const key = await crypto.subtle.importKey(
+      'raw', hexToBytes(pub),
+      { name: 'Ed25519' }, false, ['verify']
+    )
+    return await crypto.subtle.verify(
+      'Ed25519', key,
+      hexToBytes(sig),
+      new TextEncoder().encode(ts + body)
+    )
+  } catch {
+    try {
+      const key2 = await crypto.subtle.importKey(
+        'raw', hexToBytes(pub),
+        { name: 'NODE-ED25519', namedCurve: 'NODE-ED25519' }, false, ['verify']
+      )
+      return await crypto.subtle.verify(
+        'NODE-ED25519', key2,
+        hexToBytes(sig),
+        new TextEncoder().encode(ts + body)
+      )
+    } catch { return false }
+  }
+}
+
+// ── Groq API ──────────────────────────────────────────────────────────────
+async function askGroq(message, key, extraContext = '') {
+  const systemMsg = extraContext ? `${SYSTEM_PROMPT}\n\nContexto extra: ${extraContext}` : SYSTEM_PROMPT
   const res = await fetch(GROQ_API_URL, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${groqKey}`,
-      "Content-Type": "application/json",
-    },
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       model: GROQ_MODEL,
       messages: [
-        { role: "system", content: KIRA_SYSTEM_PROMPT },
-        { role: "user", content: userMessage },
+        { role: 'system', content: systemMsg },
+        { role: 'user',   content: message },
       ],
-      max_tokens: 500,
+      max_tokens: 400,
       temperature: 0.85,
-    }),
-  });
-
-  if (!res.ok) {
-    throw new Error(`Groq error: ${res.status}`);
-  }
-
-  const data = await res.json();
-  return data.choices[0].message.content.trim();
+    })
+  })
+  if (!res.ok) throw new Error(`Groq: ${res.status}`)
+  const d = await res.json()
+  return d.choices[0].message.content.trim()
 }
 
-// Responde a uma interação de slash command
-async function handleInteraction(interaction, env, ctx) {
-  const { type, data, member, user } = interaction;
+// ── Discord helpers ───────────────────────────────────────────────────────
+function json(data) {
+  return new Response(JSON.stringify(data), { headers: { 'Content-Type': 'application/json' } })
+}
 
-  // Tipo 1 = PING (verificação do Discord)
-  if (type === 1) {
-    return new Response(JSON.stringify({ type: 1 }), {
-      headers: { "Content-Type": "application/json" },
-    });
-  }
+async function editReply(appId, token, content) {
+  await fetch(`https://discord.com/api/v10/webhooks/${appId}/${token}/messages/@original`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content })
+  })
+}
 
-  // Tipo 2 = APPLICATION_COMMAND (slash commands)
-  if (type === 2) {
-    const commandName = data.name;
-    const username = member?.user?.username || user?.username || "amigo";
+async function sendError(appId, token, msg = 'Ops, tive um erro! Tenta de novo.') {
+  await editReply(appId, token, `❌ ${msg}`)
+}
 
-    if (commandName === "ping") {
-      return jsonResponse({
-        type: 4,
-        data: {
-          content: `🏓 Pong! Estou viva e funcionando, ${username}! Latência do Worker: ultrarrápida ⚡`,
-        },
-      });
-    }
+// ── Registrar comandos ────────────────────────────────────────────────────
+async function registerCommands(env) {
+  const s = { type: 3, required: false }
+  const r = { type: 3, required: true }
 
-    if (commandName === "ajuda") {
-      return jsonResponse({
-        type: 4,
-        data: {
-          content: `📋 **Comandos da Kira**\n\n💬 **Mencionar** — Me marque com @ em qualquer mensagem e eu respondo!\n\`/kira [mensagem]\` — Fala comigo direto via slash command\n\`/ping\` — Vê se estou online\n\`/ajuda\` — Esta lista aqui\n\`/sobre\` — Saiba mais sobre mim\n\nDica: pode me chamar no chat com @Kira a qualquer hora! 💜`,
-        },
-      });
-    }
+  const commands = [
+    { name: 'ping',    description: 'Verifica se a Kira esta online 🏓' },
+    { name: 'ajuda',   description: 'Lista todos os comandos 📋' },
+    { name: 'sobre',   description: 'Informacoes sobre a Kira 💜' },
+    {
+      name: 'kira', description: 'Conversa com a Kira 💬',
+      options: [{ ...r, name: 'mensagem', description: 'O que voce quer dizer?' }]
+    },
+    {
+      name: 'pergunta', description: 'Faz uma pergunta para a Kira 🤔',
+      options: [{ ...r, name: 'pergunta', description: 'Sua pergunta' }]
+    },
+    {
+      name: 'traduzir', description: 'Traduz um texto para portugues 🌍',
+      options: [
+        { ...r, name: 'texto',   description: 'Texto para traduzir' },
+        { ...s, name: 'idioma',  description: 'Idioma de origem (ex: ingles, japones)' },
+      ]
+    },
+    {
+      name: 'resumir', description: 'Resume um texto longo 📝',
+      options: [{ ...r, name: 'texto', description: 'Texto para resumir' }]
+    },
+    {
+      name: 'piada', description: 'Kira conta uma piada 😂',
+      options: [{ ...s, name: 'tema', description: 'Tema da piada (opcional)' }]
+    },
+    {
+      name: 'anime', description: 'Kira recomenda um anime 🎌',
+      options: [{ ...s, name: 'genero', description: 'Genero preferido (acao, romance, etc)' }]
+    },
+    {
+      name: 'dica', description: 'Kira da uma dica aleatoria ou sobre um tema 💡',
+      options: [{ ...s, name: 'tema', description: 'Tema da dica (opcional)' }]
+    },
+    {
+      name: 'roast', description: 'Kira faz um roast amigavel de alguem 🔥',
+      options: [{ type: 6, required: true, name: 'usuario', description: 'Usuario para o roast' }]
+    },
+    {
+      name: 'elogiar', description: 'Kira elogia alguem de forma criativa 💫',
+      options: [{ type: 6, required: true, name: 'usuario', description: 'Usuario para elogiar' }]
+    },
+    {
+      name: 'historia', description: 'Kira cria uma historia curta 📖',
+      options: [{ ...s, name: 'tema', description: 'Tema da historia (opcional)' }]
+    },
+    {
+      name: 'curiosidade', description: 'Kira conta uma curiosidade aleatoria 🧠',
+      options: [{ ...s, name: 'tema', description: 'Tema (opcional)' }]
+    },
+    {
+      name: 'humor', description: 'Kira avalia o humor do servidor 😄',
+    },
+    {
+      name: 'conselho', description: 'Kira da um conselho de vida 🌟',
+      options: [{ ...s, name: 'situacao', description: 'Sua situacao (opcional)' }]
+    },
+  ]
 
-    if (commandName === "sobre") {
-      return jsonResponse({
-        type: 4,
-        data: {
-          content: `💜 **Sobre a Kira**\n\nOi! Sou a **Kira**, uma IA assistente feita pra conversar e ajudar!\n\n🤖 Modelo: LLaMA 3 70B via Groq\n⚡ Hospedagem: Cloudflare Workers\n🌐 Velocidade: ultra-baixa latência\n\nMe mencione com @ ou use \`/kira\` pra bater papo! ✨`,
-        },
-      });
-    }
+  const res = await fetch(`https://discord.com/api/v10/applications/${env.DISCORD_APP_ID}/commands`, {
+    method: 'PUT',
+    headers: {
+      'Authorization': `Bot ${env.DISCORD_TOKEN}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(commands)
+  })
+  return res.ok ? `✅ ${commands.length} comandos registrados!` : `❌ ${await res.text()}`
+}
 
-    if (commandName === "kira") {
-      const userMessage = data.options?.find((o) => o.name === "mensagem")?.value;
+// ── Handler de comandos ───────────────────────────────────────────────────
+async function handleCommand(interaction, env, ctx) {
+  const { data, member, user, token } = interaction
+  const cmd      = data.name
+  const opts     = Object.fromEntries((data.options || []).map(o => [o.name, o.value]))
+  const username = member?.user?.username || user?.username || 'amigo'
+  const appId    = env.DISCORD_APP_ID
 
-      if (!userMessage) {
-        return jsonResponse({
-          type: 4,
-          data: { content: "❓ Você esqueceu de escrever a mensagem!" },
-        });
+  // Respostas imediatas (sem Groq)
+  if (cmd === 'ping') return json({ type: 4, data: { content: `🏓 Pong! Estou viva, ${username}! Latencia ultrarapida ⚡` } })
+
+  if (cmd === 'ajuda') return json({ type: 4, data: { content: [
+    '📋 **Comandos da Kira**\n',
+    '💬 `/kira [mensagem]` — Bate papo livre comigo',
+    '🤔 `/pergunta [pergunta]` — Me faz uma pergunta',
+    '🌍 `/traduzir [texto]` — Traduz para portugues',
+    '📝 `/resumir [texto]` — Resume um texto',
+    '😂 `/piada [tema?]` — Conto uma piada',
+    '🎌 `/anime [genero?]` — Recomendo um anime',
+    '💡 `/dica [tema?]` — Dou uma dica',
+    '🔥 `/roast @usuario` — Roast amigavel',
+    '💫 `/elogiar @usuario` — Elogio criativo',
+    '📖 `/historia [tema?]` — Crio uma historia curta',
+    '🧠 `/curiosidade [tema?]` — Curiosidade aleatoria',
+    '😄 `/humor` — Avalio o humor do servidor',
+    '🌟 `/conselho [situacao?]` — Dou um conselho',
+    '📋 `/sobre` — Sobre mim',
+    '🏓 `/ping` — Testa se estou online',
+  ].join('\n') } })
+
+  if (cmd === 'sobre') return json({ type: 4, data: { content:
+    '💜 **Sobre a Kira**\n\nOi! Sou a **Kira**, uma IA assistente animada e divertida!\n\n🤖 Powered by: LLaMA 3 70B via Groq\n⚡ Hospedagem: Cloudflare Workers\n🌐 Latencia: ultra-baixa\n\nMe use com `/kira` ou qualquer outro comando! ✨'
+  } })
+
+  // Todos os outros comandos usam Groq — resposta diferida
+  ctx.waitUntil((async () => {
+    try {
+      let prompt = ''
+
+      if (cmd === 'kira')       prompt = opts.mensagem
+      if (cmd === 'pergunta')   prompt = `Responda essa pergunta de forma clara e divertida: ${opts.pergunta}`
+      if (cmd === 'traduzir')   prompt = `Traduza para portugues brasileiro${opts.idioma ? ` (original em ${opts.idioma})` : ''}: "${opts.texto}". Mostre so a traducao, sem explicacoes extras.`
+      if (cmd === 'resumir')    prompt = `Resuma esse texto em no maximo 5 pontos curtos: "${opts.texto}"`
+      if (cmd === 'piada')      prompt = `Conta uma piada${opts.tema ? ` sobre ${opts.tema}` : ' aleatoria'} em portugues brasileiro. Pode ser trocadilho, piada de dois, ou qualquer estilo.`
+      if (cmd === 'anime')      prompt = `Recomenda 3 animes${opts.genero ? ` do genero ${opts.genero}` : ''} com uma descricao curta de cada um (1 linha). Usa emojis.`
+      if (cmd === 'dica')       prompt = `Da uma dica util e interessante${opts.tema ? ` sobre ${opts.tema}` : ' sobre qualquer assunto'}. Seja criativa!`
+      if (cmd === 'roast')      prompt = `Faz um roast amigavel e engraçado do usuario "${opts.usuario_name || 'um amigo'}" (sem ofender de verdade, so para rir). Seja criativa e use humor!`
+      if (cmd === 'elogiar')    prompt = `Elogia de forma criativa e animada o usuario "${opts.usuario_name || 'alguem'}" como se fosse um hype! Usa emojis e seja entusiasmada!`
+      if (cmd === 'historia')   prompt = `Cria uma historia curta${opts.tema ? ` sobre ${opts.tema}` : ''} com no maximo 150 palavras. Pode ser engraçada, de aventura ou romantica.`
+      if (cmd === 'curiosidade') prompt = `Me conta uma curiosidade surpreendente e verdadeira${opts.tema ? ` sobre ${opts.tema}` : ''}. Seja especifica e interessante!`
+      if (cmd === 'humor')      prompt = `Avalia o humor de um servidor de Discord de forma bem humorada, como se voce tivesse observando as conversas. Inventa algo divertido!`
+      if (cmd === 'conselho')   prompt = `Da um conselho sincero e motivador${opts.situacao ? ` para essa situacao: ${opts.situacao}` : ' de vida em geral'}. Seja humana e carinhosa.`
+
+      // Pega nome do usuario alvo para roast/elogiar
+      if ((cmd === 'roast' || cmd === 'elogiar') && data.options?.[0]?.value) {
+        const resolvedUser = interaction.data.resolved?.users?.[data.options[0].value]
+        const targetName = resolvedUser?.username || 'alguem'
+        prompt = prompt.replace(opts.usuario_name || 'um amigo', targetName).replace('alguem', targetName)
       }
 
-      // Resposta diferida (necessária para chamadas async como Groq)
-      // Primeiro ACK o Discord, depois edita com a resposta real
-      const ackResponse = new Response(
-        JSON.stringify({ type: 5 }), // DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE
-        { headers: { "Content-Type": "application/json" } }
-      );
+      if (!prompt) return await sendError(appId, token, 'Nao entendi o comando.')
 
-      // Processa em background e edita a resposta
-      ctx.waitUntil(
-        (async () => {
-          try {
-            const reply = await askGroq(userMessage, env.GROQ_KEY);
-            await fetch(
-              `https://discord.com/api/v10/webhooks/${env.DISCORD_APP_ID}/${interaction.token}/messages/@original`,
-              {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ content: `💜 ${reply}` }),
-              }
-            );
-          } catch (e) {
-            await fetch(
-              `https://discord.com/api/v10/webhooks/${env.DISCORD_APP_ID}/${interaction.token}/messages/@original`,
-              {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  content: "❌ Ops, tive um erro ao pensar na resposta. Tenta de novo!",
-                }),
-              }
-            );
-          }
-        })()
-      );
+      const reply = await askGroq(prompt, env.GROQ_KEY)
+      const prefix = { kira:'💜', pergunta:'🤔', traduzir:'🌍', resumir:'📝', piada:'😂',
+        anime:'🎌', dica:'💡', roast:'🔥', elogiar:'💫', historia:'📖',
+        curiosidade:'🧠', humor:'😄', conselho:'🌟' }[cmd] || '💜'
 
-      return ackResponse;
+      await editReply(appId, token, `${prefix} ${reply}`)
+    } catch(e) {
+      await sendError(appId, token, `Erro: ${e.message}`)
     }
-  }
+  })())
 
-  // Tipo 3 = MESSAGE_COMPONENT (botões etc) — ignora por ora
-  return new Response("OK", { status: 200 });
+  return json({ type: 5 }) // Deferred response — instantaneo
 }
 
-function jsonResponse(data) {
-  return new Response(JSON.stringify(data), {
-    headers: { "Content-Type": "application/json" },
-  });
-}
-
-// Handler principal do Cloudflare Worker
+// ── Handler principal ─────────────────────────────────────────────────────
 export default {
-  async fetch(request, env, ctx) {
-    const url = new URL(request.url);
+  async fetch(req, env, ctx) {
+    const url = new URL(req.url)
 
-    // Rota de registro de comandos (acesse uma vez para registrar)
-    if (url.pathname === "/register" && request.method === "GET") {
-      const secret = url.searchParams.get("secret");
-      if (secret !== env.REGISTER_SECRET) {
-        return new Response("Unauthorized", { status: 401 });
-      }
-      const ok = await registerCommands(env);
-      return new Response(ok ? "✅ Comandos registrados!" : "❌ Erro ao registrar", {
-        status: ok ? 200 : 500,
-      });
+    // Registro de comandos
+    if (url.pathname === '/register') {
+      if (url.searchParams.get('secret') !== env.REGISTER_SECRET)
+        return new Response('Unauthorized', { status: 401 })
+      return new Response(await registerCommands(env))
     }
 
-    // Rota principal de interações do Discord
-    if (url.pathname === "/interactions" && request.method === "POST") {
-      // Verifica assinatura do Discord (obrigatório!)
-      const signature = request.headers.get("x-signature-ed25519");
-      const timestamp = request.headers.get("x-signature-timestamp");
-      const body = await request.text();
+    if (req.method !== 'POST') return new Response('Kira Bot online! ✅')
 
-      const isValid = await verifyKey(body, signature, timestamp, env.DISCORD_PUBLIC_KEY);
+    const body = await req.text()
+    if (!await verifySignature(req, env.DISCORD_PUBLIC_KEY, body))
+      return new Response('Invalid signature', { status: 401 })
 
-      if (!isValid) {
-        return new Response("Invalid signature", { status: 401 });
-      }
-
-      const interaction = JSON.parse(body);
-      return handleInteraction(interaction, env, ctx);
-    }
-
-    // Rota de menção (via bot gateway — não suportado em Workers)
-    // Para menções funcionar, use o bot em modo gateway (Railway/Render)
-    // Aqui retorna info
-    if (url.pathname === "/") {
-      return new Response("🤖 Kira Bot está no ar! Use /interactions para o Discord.", {
-        status: 200,
-      });
-    }
-
-    return new Response("Not found", { status: 404 });
-  },
-};
-                  
+    const interaction = JSON.parse(body)
+    if (interaction.type === 1) return json({ type: 1 }) // PING
+    if (interaction.type === 2) return handleCommand(interaction, env, ctx)
+    return new Response('OK')
+  }
+        }
+    
